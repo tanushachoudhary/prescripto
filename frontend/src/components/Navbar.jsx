@@ -1,6 +1,6 @@
 import React, { useContext, useState } from "react";
 import { assets } from "./../assets/assets";
-import { NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import { AppContext } from "../context/AppContext";
 
 const Navbar = () => {
@@ -42,6 +42,11 @@ const Navbar = () => {
         </NavLink>
       </ul>
       <div className="flex items-center gap-4">
+        <Link to="https://prescripto-admin-6b47.onrender.com/">
+          <button className="bg-primary text-white px-8 py-3 rounded-full font-medium hidden md:block">
+            Admin Login
+          </button>
+        </Link>
         {token && userData ? (
           <div className="flex items-center gap-2 cursor-pointer group relative">
             <img
