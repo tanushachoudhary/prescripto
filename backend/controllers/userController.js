@@ -229,6 +229,112 @@ const bookAppointment = async (req, res) => {
   }
 };
 
+//API to reschedule an existing appointment
+const rescheduleAppointment = async (req, res) => {
+  try {
+    // 1. Get the appointment ID and the new desired slot from the request body.
+    const { appointmentId, newSlotDate, newSlotTime } = req.body;
+
+    // Validate that we have the required information.
+    if (!appointmentId || !newSlotDate || !newSlotTime) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Appointment ID, new slot date, and new slot time are required.",
+      });
+    }
+
+    // 2. Find the original appointment to be rescheduled.
+    const appointment = await appointmentModel.findById(appointmentId);
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: "Original appointment not found.",
+      });
+    }
+
+    const { docId, slotDate: oldSlotDate, slotTime: oldSlotTime } = appointment;
+
+    // 3. The new slot must be after the original slot.
+    // Create Date objects for easy comparison.
+    const oldDateTime = new Date(`${oldSlotDate} ${oldSlotTime}`);
+    const newDateTime = new Date(`${newSlotDate} ${newSlotTime}`);
+
+    if (newDateTime <= oldDateTime) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "New appointment time must be after the original appointment time.",
+      });
+    }
+
+    // 4. Fetch the doctor's record to manage their slots.
+    const doctor = await doctorModel.findById(docId);
+    if (!doctor || !doctor.available) {
+      return res.status(404).json({
+        success: false,
+        message: "Doctor not found or is not available.",
+      });
+    }
+
+    // 5. Check if the new, desired slot is available before making any changes.
+    if (
+      doctor.slots_booked[newSlotDate] &&
+      doctor.slots_booked[newSlotDate].includes(newSlotTime)
+    ) {
+      return res.status(409).json({
+        // 409 Conflict is a good status code here
+        success: false,
+        message: "The requested new slot is not available.",
+      });
+    }
+
+    // --- If we reach here, the reschedule is valid and possible. ---
+
+    // 6. Free up the old time slot from the doctor's schedule.
+    if (doctor.slots_booked[oldSlotDate]) {
+      const timeIndex = doctor.slots_booked[oldSlotDate].indexOf(oldSlotTime);
+      if (timeIndex > -1) {
+        doctor.slots_booked[oldSlotDate].splice(timeIndex, 1);
+        // If the date array becomes empty, remove the date key entirely.
+        if (doctor.slots_booked[oldSlotDate].length === 0) {
+          delete doctor.slots_booked[oldSlotDate];
+        }
+      }
+    }
+
+    // 7. Book the new time slot in the doctor's schedule.
+    if (!doctor.slots_booked[newSlotDate]) {
+      doctor.slots_booked[newSlotDate] = []; // Create the array if the date is new
+    }
+    doctor.slots_booked[newSlotDate].push(newSlotTime);
+
+    // 8. Save the updated doctor's schedule.
+    // We must tell Mongoose that we've changed a nested object.
+    doctor.markModified("slots_booked");
+    await doctor.save();
+
+    // 9. Update the appointment record with the new date and time.
+    await appointmentModel.findByIdAndUpdate(appointmentId, {
+      slotDate: newSlotDate,
+      slotTime: newSlotTime,
+      date: Date.now(), // Update the timestamp to reflect when it was rescheduled
+    });
+
+    // 10. Send a success response.
+    res.status(200).json({
+      success: true,
+      message: "Appointment rescheduled successfully",
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      success: false,
+      message: `An error occurred: ${error.message}`,
+    });
+  }
+};
+
 //API to get user appointments for my-appointments page
 const listAppointment = async (req, res) => {
   try {
@@ -369,6 +475,7 @@ export {
   getProfile,
   updateProfile,
   bookAppointment,
+  rescheduleAppointment,
   listAppointment,
   cancelAppointment,
   paymentRazorpay,
