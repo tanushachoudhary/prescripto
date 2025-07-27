@@ -257,8 +257,16 @@ const rescheduleAppointment = async (req, res) => {
 
     // 3. The new slot must be after the original slot.
     // Create Date objects for easy comparison.
-    const oldDateTime = new Date(`${oldSlotDate} ${oldSlotTime}`);
-    const newDateTime = new Date(`${newSlotDate} ${newSlotTime}`);
+
+    // --- FIX APPLIED ---
+    // The original code `new Date('DD_MM_YYYY HH:mm')` is unreliable.
+    // We now convert the date strings from 'DD_MM_YYYY' to 'YYYY-MM-DD',
+    // which is a standard format that the Date constructor parses correctly.
+    const formattedOldDate = oldSlotDate.split("_").reverse().join("-");
+    const formattedNewDate = newSlotDate.split("_").reverse().join("-");
+
+    const oldDateTime = new Date(`${formattedOldDate}T${oldSlotTime}`);
+    const newDateTime = new Date(`${formattedNewDate}T${newSlotTime}`);
 
     if (newDateTime <= oldDateTime) {
       return res.status(400).json({
@@ -283,7 +291,6 @@ const rescheduleAppointment = async (req, res) => {
       doctor.slots_booked[newSlotDate].includes(newSlotTime)
     ) {
       return res.status(409).json({
-        // 409 Conflict is a good status code here
         success: false,
         message: "The requested new slot is not available.",
       });
@@ -296,7 +303,6 @@ const rescheduleAppointment = async (req, res) => {
       const timeIndex = doctor.slots_booked[oldSlotDate].indexOf(oldSlotTime);
       if (timeIndex > -1) {
         doctor.slots_booked[oldSlotDate].splice(timeIndex, 1);
-        // If the date array becomes empty, remove the date key entirely.
         if (doctor.slots_booked[oldSlotDate].length === 0) {
           delete doctor.slots_booked[oldSlotDate];
         }
@@ -305,12 +311,11 @@ const rescheduleAppointment = async (req, res) => {
 
     // 7. Book the new time slot in the doctor's schedule.
     if (!doctor.slots_booked[newSlotDate]) {
-      doctor.slots_booked[newSlotDate] = []; // Create the array if the date is new
+      doctor.slots_booked[newSlotDate] = [];
     }
     doctor.slots_booked[newSlotDate].push(newSlotTime);
 
     // 8. Save the updated doctor's schedule.
-    // We must tell Mongoose that we've changed a nested object.
     doctor.markModified("slots_booked");
     await doctor.save();
 
@@ -318,7 +323,7 @@ const rescheduleAppointment = async (req, res) => {
     await appointmentModel.findByIdAndUpdate(appointmentId, {
       slotDate: newSlotDate,
       slotTime: newSlotTime,
-      date: Date.now(), // Update the timestamp to reflect when it was rescheduled
+      date: Date.now(),
     });
 
     // 10. Send a success response.
