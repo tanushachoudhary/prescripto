@@ -1,196 +1,258 @@
 import React, { useState, useEffect, useRef } from "react";
-import "./Chatbot.css";
+import { MessageSquare, X, Send } from "lucide-react";
+import "./Chatbot.css"; // Correct import for a regular CSS file
 
-// Helper component for rendering the bot's thinking animation
-const LoadingDots = () => (
-  <div className="loading-dots">
-    <div className="dot"></div>
-    <div className="dot"></div>
-    <div className="dot"></div>
+// Helper component for the typing animation
+const TypingIndicator = () => (
+  <div className="message ai typingIndicator">
+    <span />
+    <span />
+    <span />
   </div>
 );
 
 // Main Chatbot Component
 const Chatbot = () => {
-  // State management for the chatbot
-  const [isOpen, setIsOpen] = useState(false); // Controls chat window visibility
-  const [messages, setMessages] = useState([
-    {
-      text: "Hello! I'm your Prescripto assistant. How can I help you today? You can ask me about doctors, appointments, or general health questions.",
-      isUser: false,
-    },
-  ]); // Stores the conversation history
-  const [inputValue, setInputValue] = useState(""); // Current value of the input field
-  const [isTyping, setIsTyping] = useState(false); // To show a 'typing' indicator
+  // State management
+  const [isOpen, setIsOpen] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
 
-  // Ref for the chat body to auto-scroll to the latest message
+  // Refs for the chat window and body
+  const chatWindowRef = useRef(null);
   const chatBodyRef = useRef(null);
 
-  // API configuration
-  const apiKey =import.meta.env.VITE_GEMINI_KEY // Leave this empty, it will be handled by the environment
-  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  // Function to get context from the current page
+  const getPageContext = () => {
+    const title = document.title;
+    const descriptionMeta = document.querySelector('meta[name="description"]');
+    const description = descriptionMeta ? descriptionMeta.content : "";
+    const mainContent = document.querySelector("main, article, body");
+    const textContent = mainContent
+      ? mainContent.innerText.substring(0, 1500)
+      : ""; // Limit context size
 
-  // Effect to scroll down when new messages are added
+    return `The user is currently on a page with the following details:\n- Title: "${title}"\n- Description: "${description}"\n- Relevant Text Snippet: "${textContent}"`;
+  };
+
+  // Toggles chat window visibility
+  const toggleChat = () => {
+    setIsOpen(!isOpen);
+  };
+
+  // Effect to close chat on outside click
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      const toggleButton = document.getElementById("chatbot-toggle-button");
+      if (
+        chatWindowRef.current &&
+        !chatWindowRef.current.contains(event.target) &&
+        toggleButton &&
+        !toggleButton.contains(event.target)
+      ) {
+        setIsOpen(false);
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    } else {
+      document.removeEventListener("mousedown", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen]);
+
+  // Effect to auto-scroll to the latest message
   useEffect(() => {
     if (chatBodyRef.current) {
       chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
     }
   }, [messages, isTyping]);
 
-  // Toggles the chatbot window open/closed
-  const toggleChatbot = () => {
-    setIsOpen(!isOpen);
-  };
+  // Handles sending a message
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    if (input.trim() === "") return;
 
-  // Handles sending a message to the Gemini API
-  const handleSendMessage = async () => {
-    if (inputValue.trim() === "") return;
+    const newUserMessage = { id: Date.now(), text: input, sender: "user" };
+    setMessages((prevMessages) => [...prevMessages, newUserMessage]);
+    setInput("");
+    setIsTyping(true);
 
-    // Add user's message to the chat
-    const userMessage = { text: inputValue, isUser: true };
-    setMessages((prevMessages) => [...prevMessages, userMessage]);
-    setInputValue("");
-    setIsTyping(true); // Show typing indicator
+    const lowercasedInput = newUserMessage.text.toLowerCase();
+    let predefinedResponse = null;
+
+    // --- Check for predefined questions ---
+    if (
+      lowercasedInput.includes("book an appointment") ||
+      lowercasedInput.includes("how to book")
+    ) {
+      predefinedResponse =
+        "To book an appointment, please search for a doctor by their name or specialty. Once you've found the right doctor, you can view their available slots and choose one that works for you.";
+    } else if (
+      lowercasedInput.includes("cancel an appointment") ||
+      lowercasedInput.includes("how to cancel")
+    ) {
+      predefinedResponse =
+        "You can cancel an existing appointment by navigating to the 'My Appointments' page. From there, you will see an option to cancel it.";
+    } else if (lowercasedInput.includes("reschedule")) {
+      predefinedResponse =
+        "To reschedule an appointment, please go to the 'My Appointments' page. You will find the option to reschedule next to your appointment details.";
+    } else if (
+      lowercasedInput.includes("search for doctor") ||
+      lowercasedInput.includes("filter by specialty")
+    ) {
+      predefinedResponse =
+        "You can easily search for doctors and filter them by their specialty on our platform to find the care you need.";
+    }
+
+    // If a predefined response is found, show it and skip the API call
+    if (predefinedResponse) {
+      const aiResponse = {
+        id: Date.now() + 1,
+        text: predefinedResponse,
+        sender: "ai",
+      };
+      setTimeout(() => {
+        // Simulate thinking delay
+        setMessages((prevMessages) => [...prevMessages, aiResponse]);
+        setIsTyping(false);
+      }, 600);
+      return;
+    }
+
+    // --- If no predefined response, proceed with Gemini API call ---
+    const conversationHistory = messages.map((msg) => ({
+      role: msg.sender === "user" ? "user" : "model",
+      parts: [{ text: msg.text }],
+    }));
+
+    let contextPrompt = "";
+    if (
+      lowercasedInput.includes("this page") ||
+      lowercasedInput.includes("explain this")
+    ) {
+      contextPrompt = getPageContext();
+    }
+
+    const fullPrompt = `${contextPrompt}\n\nUser query: ${newUserMessage.text}`;
 
     try {
-      // Prepare the payload for the Gemini API
+      const apiKey = import.meta.env.VITE_GEMINI_KEY; // This will be handled by the environment, do not add a key here.
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
       const payload = {
         contents: [
-          {
-            role: "user",
-            parts: [{ text: inputValue }],
-          },
+          ...conversationHistory,
+          { role: "user", parts: [{ text: fullPrompt }] },
         ],
       };
 
-      // Make the API call
-      const response = await fetch(apiUrl, {
+      const res = await fetch(apiUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
-      if (!response.ok) {
-        throw new Error(`API request failed with status ${response.status}`);
+      if (!res.ok) {
+        throw new Error(`API request failed with status ${res.status}`);
       }
 
-      const result = await response.json();
+      const data = await res.json();
 
       let botResponseText =
         "Sorry, I couldn't get a response. Please try again.";
       if (
-        result.candidates &&
-        result.candidates.length > 0 &&
-        result.candidates[0].content &&
-        result.candidates[0].content.parts &&
-        result.candidates[0].content.parts.length > 0
+        data.candidates &&
+        data.candidates.length > 0 &&
+        data.candidates[0].content.parts.length > 0
       ) {
-        // Get the raw text and remove the ** markdown for bolding
-        const rawText = result.candidates[0].content.parts[0].text;
-        botResponseText = rawText.replace(/\*\*/g, "");
+        botResponseText = data.candidates[0].content.parts[0].text;
       }
 
-      // Add bot's response to the chat
-      const botMessage = { text: botResponseText, isUser: false };
-      setMessages((prevMessages) => [...prevMessages, botMessage]);
+      const aiResponse = {
+        id: Date.now() + 1,
+        text: botResponseText.replace(/\*\*/g, ""),
+        sender: "ai",
+      };
+      setMessages((prevMessages) => [...prevMessages, aiResponse]);
     } catch (error) {
       console.error("Error fetching from Gemini API:", error);
-      // Add an error message to the chat if the API call fails
-      const errorMessage = {
-        text: "Sorry, something went wrong. Please check your connection or try again later.",
-        isUser: false,
+      const errorResponse = {
+        id: Date.now() + 1,
+        text: "Sorry, something went wrong. Please check your connection and try again later.",
+        sender: "ai",
       };
-      setMessages((prevMessages) => [...prevMessages, errorMessage]);
+      setMessages((prevMessages) => [...prevMessages, errorResponse]);
     } finally {
-      setIsTyping(false); // Hide typing indicator
-    }
-  };
-
-  // Handles the key press event to send message on 'Enter'
-  const handleKeyPress = (event) => {
-    if (event.key === "Enter") {
-      handleSendMessage();
+      setIsTyping(false);
     }
   };
 
   return (
-    <div>
-      {/* The floating button to open/close the chatbot */}
-      <button onClick={toggleChatbot} className="chatbot-toggle-button">
-        {/* Simple chat icon using SVG */}
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="30"
-          height="30"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-        </svg>
+    <>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');`}</style>
+      {/* Floating button to toggle the chat window */}
+      <button
+        id="chatbot-toggle-button"
+        className="chatToggleButton"
+        onClick={toggleChat}
+        aria-label={isOpen ? "Close chat" : "Open chat"}
+      >
+        {isOpen ? <X size={28} /> : <MessageSquare size={28} />}
       </button>
 
-      {/* The chat window, which shows only if 'isOpen' is true */}
+      {/* The chat window */}
       {isOpen && (
-        <div className="chatbot-window">
-          <div className="chatbot-header">
-            <h2>Prescripto Bot</h2>
-            <button onClick={toggleChatbot} className="chatbot-close-button">
-              &times;
+        <div ref={chatWindowRef} className="chatWindow">
+          <div className="chatHeader">
+            <span>Prescripto Bot</span>
+            <button
+              onClick={toggleChat}
+              className="closeButton"
+              aria-label="Close chat"
+            >
+              <X size={20} />
             </button>
           </div>
-          <div className="chatbot-body" ref={chatBodyRef}>
-            {/* Map through messages and render them */}
-            {messages.map((msg, index) => (
-              <div
-                key={index}
-                className={`chat-message ${msg.isUser ? "user" : "bot"}`}
-              >
-                {msg.text}
-              </div>
-            ))}
-            {/* Show loading indicator when the bot is 'typing' */}
-            {isTyping && (
-              <div className="chat-message bot">
-                <LoadingDots />
-              </div>
+          <div ref={chatBodyRef} className="chatBody">
+            {messages.length === 0 ? (
+              <p className="initialMessage">Hello! How can I help you today?</p>
+            ) : (
+              messages.map((msg) => (
+                <div key={msg.id} className={`message ${msg.sender}`}>
+                  {msg.text}
+                </div>
+              ))
             )}
+            {isTyping && <TypingIndicator />}
           </div>
-          <div className="chatbot-footer">
+          <form onSubmit={handleSendMessage} className="chatInputForm">
             <input
               type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Type a message..."
-              aria-label="Type a message"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Type your message..."
+              className="chatInput"
+              disabled={isTyping}
+              aria-label="Chat input"
             />
-            <button onClick={handleSendMessage} aria-label="Send message">
-              {/* Send icon using SVG */}
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
+            <button
+              type="submit"
+              className="sendButton"
+              disabled={isTyping || input.trim() === ""}
+              aria-label="Send message"
+            >
+              <Send size={20} />
             </button>
-          </div>
+          </form>
         </div>
       )}
-    </div>
+    </>
   );
 };
 
